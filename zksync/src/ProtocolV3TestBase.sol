@@ -7,15 +7,15 @@ import {IERC20} from 'solidity-utils/contracts/oz-common/interfaces/IERC20.sol';
 import {IERC20Metadata} from 'solidity-utils/contracts/oz-common/interfaces/IERC20Metadata.sol';
 import {SafeERC20} from 'solidity-utils/contracts/oz-common/SafeERC20.sol';
 import {ReserveConfiguration} from 'aave-v3-origin/core/contracts/protocol/libraries/configuration/ReserveConfiguration.sol';
-import {IDefaultInterestRateStrategyV2} from 'aave-v3-origin/core/contracts/interfaces/IDefaultInterestRateStrategyV2.sol';
 import {AaveV3EthereumAssets} from 'aave-address-book/AaveV3Ethereum.sol';
 import {DiffUtils} from 'aave-v3-origin/../tests/utils/DiffUtils.sol';
-import {ProtocolV3TestBase as RawProtocolV3TestBase, ReserveConfig} from 'aave-v3-origin/../tests/utils/ProtocolV3TestBase.sol';
-import {IInitializableAdminUpgradeabilityProxy} from './interfaces/IInitializableAdminUpgradeabilityProxy.sol';
-import {ExtendedAggregatorV2V3Interface} from './interfaces/ExtendedAggregatorV2V3Interface.sol';
-import {ProxyHelpers} from './ProxyHelpers.sol';
-import {CommonTestBase, ReserveTokens} from './CommonTestBase.sol';
-import {ILegacyDefaultInterestRateStrategy} from './dependencies/ILegacyDefaultInterestRateStrategy.sol';
+import {ProtocolV3TestBase as RawProtocolV3TestBase, ReserveConfig, ReserveTokens} from 'aave-v3-origin/../tests/utils/ProtocolV3TestBase.sol';
+import {IInitializableAdminUpgradeabilityProxy} from '../../src/interfaces/IInitializableAdminUpgradeabilityProxy.sol';
+import {ExtendedAggregatorV2V3Interface} from '../../src/interfaces/ExtendedAggregatorV2V3Interface.sol';
+import {ProxyHelpers} from 'aave-v3-origin/../tests/utils/ProxyHelpers.sol';
+import {CommonTestBase} from '../../src/CommonTestBase.sol';
+import {SnapshotHelpersV3} from './SnapshotHelpersV3.sol';
+import {ILegacyDefaultInterestRateStrategy} from '../../src/dependencies/ILegacyDefaultInterestRateStrategy.sol';
 
 struct LocalVars {
   IPoolDataProvider.TokenData[] reserves;
@@ -40,6 +40,14 @@ struct InterestStrategyValues {
 contract ProtocolV3TestBase is RawProtocolV3TestBase, CommonTestBase {
   using ReserveConfiguration for DataTypes.ReserveConfigurationMap;
   using SafeERC20 for IERC20;
+
+  SnapshotHelpersV3 public snapshotHelper;
+
+  function setUp() public virtual {
+    snapshotHelper = new SnapshotHelpersV3();
+    vm.makePersistent(address(snapshotHelper));
+    vm.allowCheatcodes(address(snapshotHelper));
+  }
 
   /**
    * @dev runs the default test suite that should run on any proposal touching the aave protocol which includes:
@@ -116,6 +124,41 @@ contract ProtocolV3TestBase is RawProtocolV3TestBase, CommonTestBase {
         require(configAfter[i].borrowCap <= configAfter[i].supplyCap, 'PL_SUPPLY_LT_BORROW');
       }
     }
+  }
+
+  /**
+   * @dev Generates a markdown compatible snapshot of the whole pool configuration into `/reports`.
+   * @param reportName filename suffix for the generated reports.
+   * @param pool the pool to be snapshot
+   * @return ReserveConfig[] list of configs
+   */
+  function createConfigurationSnapshot(
+    string memory reportName,
+    IPool pool
+  ) public override returns (ReserveConfig[] memory) {
+    return createConfigurationSnapshot(reportName, pool, true, true, true, true);
+  }
+
+  function createConfigurationSnapshot(
+    string memory reportName,
+    IPool pool,
+    bool reserveConfigs,
+    bool strategyConfigs,
+    bool eModeConigs,
+    bool poolConfigs
+  ) public override returns (ReserveConfig[] memory) {
+    ReserveConfig[] memory configs = _getReservesConfigs(pool);
+    _switchOffZkVm();
+    return
+      snapshotHelper.createConfigurationSnapshot(
+        reportName,
+        pool,
+        reserveConfigs,
+        strategyConfigs,
+        eModeConigs,
+        poolConfigs,
+        configs
+      );
   }
 
   /**
@@ -221,6 +264,7 @@ contract ProtocolV3TestBase is RawProtocolV3TestBase, CommonTestBase {
     uint256 amount
   ) internal {
     this._borrow(testAssetConfig, pool, borrower, amount);
+
     _repay(testAssetConfig, pool, borrower, amount);
   }
 
@@ -311,187 +355,39 @@ contract ProtocolV3TestBase is RawProtocolV3TestBase, CommonTestBase {
     vm.stopPrank();
   }
 
-  function getIsVirtualAccActive(
-    DataTypes.ReserveConfigurationMap memory configuration
-  ) external pure returns (bool) {
-    return configuration.getIsVirtualAccActive();
-  }
-
-  function _logReserveConfig(ReserveConfig memory config) internal pure {
-    console.log('Symbol ', config.symbol);
-    console.log('Underlying address ', config.underlying);
-    console.log('AToken address ', config.aToken);
-    console.log('Stable debt token address ', config.stableDebtToken);
-    console.log('Variable debt token address ', config.variableDebtToken);
-    console.log('Decimals ', config.decimals);
-    console.log('LTV ', config.ltv);
-    console.log('Liquidation Threshold ', config.liquidationThreshold);
-    console.log('Liquidation Bonus ', config.liquidationBonus);
-    console.log('Liquidation protocol fee ', config.liquidationProtocolFee);
-    console.log('Reserve Factor ', config.reserveFactor);
-    console.log('Usage as collateral enabled ', (config.usageAsCollateralEnabled) ? 'Yes' : 'No');
-    console.log('Borrowing enabled ', (config.borrowingEnabled) ? 'Yes' : 'No');
-    console.log('Stable borrow rate enabled ', (config.stableBorrowRateEnabled) ? 'Yes' : 'No');
-    console.log('Supply cap ', config.supplyCap);
-    console.log('Borrow cap ', config.borrowCap);
-    console.log('Debt ceiling ', config.debtCeiling);
-    console.log('eMode category ', config.eModeCategory);
-    console.log('Interest rate strategy ', config.interestRateStrategy);
-    console.log('Is active ', (config.isActive) ? 'Yes' : 'No');
-    console.log('Is frozen ', (config.isFrozen) ? 'Yes' : 'No');
-    console.log('Is siloed ', (config.isSiloed) ? 'Yes' : 'No');
-    console.log('Is borrowable in isolation ', (config.isBorrowableInIsolation) ? 'Yes' : 'No');
-    console.log('Is flashloanable ', (config.isFlashloanable) ? 'Yes' : 'No');
-    console.log('Is virtual accounting active ', (config.virtualAccActive) ? 'Yes' : 'No');
-    console.log('Virtual balance ', config.virtualBalance);
-    console.log('-----');
-    console.log('-----');
+  function _writeEModeConfigs(
+    string memory path,
+    ReserveConfig[] memory configs,
+    IPool pool
+  ) internal override {
+    _switchOffZkVm();
+    return snapshotHelper.writeEModeConfigs(path, configs, pool);
   }
 
   function _writeStrategyConfigs(
     string memory path,
     ReserveConfig[] memory configs
-  ) internal virtual override {
-    // keys for json stringification
-    string memory strategiesKey = 'stategies';
-    string memory content = '{}';
-    vm.serializeJson(strategiesKey, '{}');
-
-    for (uint256 i = 0; i < configs.length; i++) {
-      IDefaultInterestRateStrategyV2 strategyV2 = IDefaultInterestRateStrategyV2(
-        configs[i].interestRateStrategy
-      );
-      ILegacyDefaultInterestRateStrategy strategyV1 = ILegacyDefaultInterestRateStrategy(
-        configs[i].interestRateStrategy
-      );
-      address asset = configs[i].underlying;
-      string memory key = vm.toString(asset);
-      vm.serializeJson(key, '{}');
-      vm.serializeString(key, 'address', vm.toString(configs[i].interestRateStrategy));
-      string memory object;
-      try strategyV1.getVariableRateSlope1() {
-        vm.serializeString(
-          key,
-          'baseStableBorrowRate',
-          vm.toString(strategyV1.getBaseStableBorrowRate())
-        );
-        vm.serializeString(key, 'stableRateSlope1', vm.toString(strategyV1.getStableRateSlope1()));
-        vm.serializeString(key, 'stableRateSlope2', vm.toString(strategyV1.getStableRateSlope2()));
-        vm.serializeString(
-          key,
-          'baseVariableBorrowRate',
-          vm.toString(strategyV1.getBaseVariableBorrowRate())
-        );
-        vm.serializeString(
-          key,
-          'variableRateSlope1',
-          vm.toString(strategyV1.getVariableRateSlope1())
-        );
-        vm.serializeString(
-          key,
-          'variableRateSlope2',
-          vm.toString(strategyV1.getVariableRateSlope2())
-        );
-        vm.serializeString(
-          key,
-          'optimalStableToTotalDebtRatio',
-          vm.toString(strategyV1.OPTIMAL_STABLE_TO_TOTAL_DEBT_RATIO())
-        );
-        vm.serializeString(
-          key,
-          'maxExcessStableToTotalDebtRatio',
-          vm.toString(strategyV1.MAX_EXCESS_STABLE_TO_TOTAL_DEBT_RATIO())
-        );
-        vm.serializeString(key, 'optimalUsageRatio', vm.toString(strategyV1.OPTIMAL_USAGE_RATIO()));
-        object = vm.serializeString(
-          key,
-          'maxExcessUsageRatio',
-          vm.toString(strategyV1.MAX_EXCESS_USAGE_RATIO())
-        );
-      } catch {
-        vm.serializeString(
-          key,
-          'baseVariableBorrowRate',
-          vm.toString(strategyV2.getBaseVariableBorrowRate(asset))
-        );
-        vm.serializeString(
-          key,
-          'variableRateSlope1',
-          vm.toString(strategyV2.getVariableRateSlope1(asset))
-        );
-        vm.serializeString(
-          key,
-          'variableRateSlope2',
-          vm.toString(strategyV2.getVariableRateSlope2(asset))
-        );
-        vm.serializeString(
-          key,
-          'maxVariableBorrowRate',
-          vm.toString(strategyV2.getMaxVariableBorrowRate(asset))
-        );
-        object = vm.serializeString(
-          key,
-          'optimalUsageRatio',
-          vm.toString(strategyV2.getOptimalUsageRatio(asset))
-        );
-      }
-      content = vm.serializeString(strategiesKey, key, object);
-    }
-    string memory output = vm.serializeString('root', 'strategies', content);
-    vm.writeJson(output, path);
+  ) internal override {
+    _switchOffZkVm();
+    return snapshotHelper.writeStrategyConfigs(path, configs);
   }
 
-  // TODO: deprecated, remove it later
-  function _validateInterestRateStrategy(
-    address interestRateStrategyAddress,
-    address expectedStrategy,
-    InterestStrategyValues memory expectedStrategyValues
-  ) internal view {
-    ILegacyDefaultInterestRateStrategy strategy = ILegacyDefaultInterestRateStrategy(
-      interestRateStrategyAddress
-    );
+  function _writeReserveConfigs(
+    string memory path,
+    ReserveConfig[] memory configs,
+    IPool pool
+  ) internal override {
+    _switchOffZkVm();
+    return snapshotHelper.writeReserveConfigs(path, configs, pool);
+  }
 
-    require(
-      address(strategy) == expectedStrategy,
-      '_validateInterestRateStrategy() : INVALID_STRATEGY_ADDRESS'
-    );
+  function _writePoolConfiguration(string memory path, IPool pool) internal override {
+    _switchOffZkVm();
+    return snapshotHelper.writePoolConfiguration(path, pool);
+  }
 
-    require(
-      strategy.OPTIMAL_USAGE_RATIO() == expectedStrategyValues.optimalUsageRatio,
-      '_validateInterestRateStrategy() : INVALID_OPTIMAL_RATIO'
-    );
-    require(
-      strategy.OPTIMAL_STABLE_TO_TOTAL_DEBT_RATIO() ==
-        expectedStrategyValues.optimalStableToTotalDebtRatio,
-      '_validateInterestRateStrategy() : INVALID_OPTIMAL_STABLE_TO_TOTAL_DEBT_RATIO'
-    );
-    require(
-      address(strategy.ADDRESSES_PROVIDER()) == expectedStrategyValues.addressesProvider,
-      '_validateInterestRateStrategy() : INVALID_ADDRESSES_PROVIDER'
-    );
-    require(
-      strategy.getBaseVariableBorrowRate() == expectedStrategyValues.baseVariableBorrowRate,
-      '_validateInterestRateStrategy() : INVALID_BASE_VARIABLE_BORROW'
-    );
-    require(
-      strategy.getBaseStableBorrowRate() == expectedStrategyValues.baseStableBorrowRate,
-      '_validateInterestRateStrategy() : INVALID_BASE_STABLE_BORROW'
-    );
-    require(
-      strategy.getStableRateSlope1() == expectedStrategyValues.stableRateSlope1,
-      '_validateInterestRateStrategy() : INVALID_STABLE_SLOPE_1'
-    );
-    require(
-      strategy.getStableRateSlope2() == expectedStrategyValues.stableRateSlope2,
-      '_validateInterestRateStrategy() : INVALID_STABLE_SLOPE_2'
-    );
-    require(
-      strategy.getVariableRateSlope1() == expectedStrategyValues.variableRateSlope1,
-      '_validateInterestRateStrategy() : INVALID_VARIABLE_SLOPE_1'
-    );
-    require(
-      strategy.getVariableRateSlope2() == expectedStrategyValues.variableRateSlope2,
-      '_validateInterestRateStrategy() : INVALID_VARIABLE_SLOPE_2'
-    );
+  function _switchOffZkVm() internal {
+    (bool success, ) = address(vm).call(abi.encodeWithSignature('zkVm(bool)', false));
+    require(success, 'ERROR SWITCHING OFF ZKVM');
   }
 }
